@@ -622,6 +622,11 @@ module cv32e40px_rvfi
     output logic [31:0] rvfi_csr_lpcount1_wmask,
     output logic [31:0] rvfi_csr_lpcount1_rdata,
     output logic [31:0] rvfi_csr_lpcount1_wdata
+
+    // AMO instructions, all from LSU
+    // input logic        amo_write_phase_i,
+    // input logic [31:0] amo_addr_q_i,
+    // input logic [31:0] amo_wdata_i
 );
 
 
@@ -864,7 +869,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
 
     rvfi_dbg       = new_rvfi_trace.m_dbg_cause;
     rvfi_dbg_mode  = new_rvfi_trace.m_dbg_taken;
-    rvfi_intr      = new_rvfi_trace.m_intr;  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+    rvfi_intr      = new_rvfi_trace.m_intr;  // patch, following OpenHW updated code
 
     rvfi_trap.trap = 0;
     if (new_rvfi_trace.m_is_illegal) begin
@@ -1248,9 +1253,9 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
   // Armed at the trap/interrupt redirect (check_trap), consumed by the next
   // IF fill: that instruction is the first of the handler, which per the
   // RVFI spec carries rvfi_intr (cause + interrupt/exception kind).
-  rvfi_intr_t s_pending_intr = '0; // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+  rvfi_intr_t s_pending_intr = '0; // patch, following OpenHW updated code
   //Work arround until I find the coreect way to distinguish trap
-  function void check_trap();  // by RICCARDO GIANI, patches for all function copied from file cv32e40p_rvfi.sv
+  function void check_trap();  // patch, following OpenHW updated code
     bit s_dbg_exception, s_exception, s_irq;
     s_dbg_exception = 1'b0;
     s_exception     = 1'b0;
@@ -1478,7 +1483,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
         m_trace.m_rd_wdata[1] = r_pipe_freeze_trace.rf_wdata_wb;
         m_trace.m_2_rd_insn = 1'b1;
         m_trace.m_got_first_data = 1'b1;
-    end else begin
+    end else begin  // patch for AMO: if (!m_trace.m_got_first_data)
         m_trace.m_rd_addr[0] = r_pipe_freeze_trace.rf_addr_wb;
         m_trace.m_rd_wdata[0] = r_pipe_freeze_trace.rf_wdata_wb;
         m_trace.m_got_first_data = 1'b1;
@@ -1506,10 +1511,13 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
 
     bit s_dont_override_mstatus_fs_id;
 
+    // bit is_amo;     // AMO instructions
+    // bit amo_stall;  // AMO instructions
+
     // Asynchronous debug entry (haltreq): drop of the killed ID-stage
     // instruction (see the arming block in the monitor loop).
-    bit          s_halt_kill_pending; // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
-    logic [31:0] s_halt_kill_pc;  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+    bit          s_halt_kill_pending; // patch, following OpenHW updated code
+    logic [31:0] s_halt_kill_pc;  // patch, following OpenHW updated code
 
     trace_if             = new();
     trace_id             = new();
@@ -1545,12 +1553,18 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
 
     s_dont_override_mstatus_fs_id = 1'b0;
 
-    s_halt_kill_pending  = 1'b0;  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
-    s_halt_kill_pc       = '0;  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+    s_halt_kill_pending  = 1'b0;  // patch, following OpenHW updated code
+    s_halt_kill_pc       = '0;  // patch, following OpenHW updated code
+
+    // is_amo = 1'b0;
+    // amo_stall = 1'b0;
     
     forever begin
       wait(e_pipe_monitor_ok.triggered);  // event triggered
       #1;
+
+      // is_amo = (r_pipe_freeze_trace.data_atop_ex != 6'h00); // instruction is AMO if atop is not '0
+      // amo_stall = is_amo && !r_pipe_freeze_trace.amo_write_phase; // stall active during AMO's initial load
 
       s_core_is_decoding = (r_pipe_freeze_trace.ctrl_fsm_cs == DECODE) || (r_pipe_freeze_trace.ctrl_fsm_cs == DECODE_HWLOOP);
       check_trap();
@@ -1573,7 +1587,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
         end
       end
 
-      // by RICCARDO GIANI, patches copied from file cv32e40p_rvfi.sv
+      // patch, following OpenHW updated code
       // Asynchronous debug entry (haltreq): DBG_TAKEN_ID kills the instruction
       // still in ID - dpc points at it and it never executes (its rd keeps the
       // old value). Drop its pending trace_id row so no phantom retire is
@@ -1652,7 +1666,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
 
       s_new_valid_insn = r_pipe_freeze_trace.id_valid && r_pipe_freeze_trace.is_decoding;// && !r_pipe_freeze_trace.apu_rvalid;
 
-      s_wb_valid_adjusted = r_pipe_freeze_trace.wb_valid && (s_core_is_decoding || (r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_EX) || (r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_WB) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_FLUSH) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_ID) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_IF));// && !r_pipe_freeze_trace.apu_rvalid;;
+      s_wb_valid_adjusted = r_pipe_freeze_trace.wb_valid && (s_core_is_decoding || (r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_EX) || (r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_WB) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_FLUSH) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_ID) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_IF));// && !r_pipe_freeze_trace.apu_rvalid;; // && (!amo_stall)
       s_ex_reg_we_adjusted = r_pipe_freeze_trace.ex_reg_we && r_pipe_freeze_trace.mult_ready && r_pipe_freeze_trace.alu_ready && r_pipe_freeze_trace.lsu_ready_ex && !s_apu_to_alu_port;
       s_rf_we_wb_adjusted = r_pipe_freeze_trace.rf_we_wb && (~r_pipe_freeze_trace.data_misaligned_ex && r_pipe_freeze_trace.wb_ready) && (!s_apu_to_lsu_port || r_pipe_freeze_trace.wb_contention_lsu);
 
@@ -1694,12 +1708,12 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
           trace_wb.m_rd_addr[1]  = r_pipe_freeze_trace.rf_addr_wb;
           trace_wb.m_rd_wdata[1] = r_pipe_freeze_trace.rf_wdata_wb;
           trace_wb.m_2_rd_insn   = 1'b1;
-        end else begin
+        end else begin  // patch for AMO: if (!trace_wb.m_got_first_data)
           trace_wb.m_rd_addr[0]  = r_pipe_freeze_trace.rf_addr_wb;
           trace_wb.m_rd_wdata[0] = r_pipe_freeze_trace.rf_wdata_wb;
         end
 
-        if(r_pipe_freeze_trace.csr.fregs_we && r_pipe_freeze_trace.rf_we_wb && r_pipe_freeze_trace.rf_addr_wb[5]) begin //Catching mstatus updates caused by flw, by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+        if(r_pipe_freeze_trace.csr.fregs_we && r_pipe_freeze_trace.rf_we_wb && r_pipe_freeze_trace.rf_addr_wb[5]) begin //Catching mstatus updates caused by flw, patch following OpenHW updated code
           `CSR_FROM_PIPE(wb, mstatus_fs)
           trace_wb.m_csr.mstatus_fs_we = 1'b1;
           trace_wb.m_csr.mstatus_fs_wmask = '1;
@@ -1785,7 +1799,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
         end
       end
 
-      // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+      // patch, following OpenHW updated code
       // If mret, we need to keep the instruction in Id during flush_ex because mstatus update happens at that time
       // DBG_TAKEN_ID with debug_cause==HALTREQ kills the ID-stage instruction:
       // the controller drains EX/WB through DBG_FLUSH before the entry, so a
@@ -1793,7 +1807,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
       // phantom retire (with a stale rd write) that never happened
       // architecturally. Keep accepting the ebreak/trigger/step flavours,
       // whose ID instruction is the entry cause itself.
-      s_ex_valid_adjusted = (r_pipe_freeze_trace.ex_valid && r_pipe_freeze_trace.ex_ready) && (s_core_is_decoding || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_IF) || ((r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_ID) && (r_pipe_freeze_trace.debug_cause != DBG_CAUSE_HALTREQ)) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_FLUSH) || ((r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_EX) && !r_pipe_freeze_trace.mret_insn_dec));
+      s_ex_valid_adjusted = (r_pipe_freeze_trace.ex_valid && r_pipe_freeze_trace.ex_ready) && (s_core_is_decoding || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_IF) || ((r_pipe_freeze_trace.ctrl_fsm_cs == DBG_TAKEN_ID) && (r_pipe_freeze_trace.debug_cause != DBG_CAUSE_HALTREQ)) || (r_pipe_freeze_trace.ctrl_fsm_cs == DBG_FLUSH) || ((r_pipe_freeze_trace.ctrl_fsm_cs == FLUSH_EX) && !r_pipe_freeze_trace.mret_insn_dec)); // && (!amo_stall)
       //EX_STAGE
 
       if (trace_id.m_valid) begin
@@ -1913,6 +1927,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
             trace_id.m_mem_req_id[0] = cnt_data_req;
             trace_id.m_mem_req_id_valid[0] = 1'b1;
 
+            // address mux: uses amo_addr_q if AMO write, original address if not --> (r_pipe_freeze_trace.amo_write_phase) ? r_pipe_freeze_trace.amo_addr_q :
             trace_id.m_mem.addr = r_pipe_freeze_trace.data_addr_pmp;
             if (r_pipe_freeze_trace.data_misaligned) begin
               cnt_data_req = cnt_data_req + 1;
@@ -1922,11 +1937,16 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
             // RVFI spec: rmask flags the bytes a LOAD reads, wmask the bytes
             // a STORE writes (data_we_ex=0 is a load). The two assignments
             // were historically swapped.
+            // Trace as reading only if NOT in forced AMO write phase -->  && !r_pipe_freeze_trace.amo_write_phase
             if (!r_pipe_freeze_trace.data_we_ex) begin
               trace_id.m_is_load   = 1'b1;
-              trace_id.m_mem.rmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);  //'1; by RICCARDO GIANI, to solve nested interrupt errors, old: *.m_mem.wmask
+              trace_id.m_mem.rmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be); //'1; patch, following OpenHW updated code
             end else begin
-              trace_id.m_mem.wmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);  //'1; by RICCARDO GIANI, to solve nested interrupt errors, old: *.m_mem.rmask
+              trace_id.m_mem.wmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be); //'1; patch, following OpenHW updated code
+              // Forza il salvataggio del dato di scrittura formale per l'AMO
+              // if (r_pipe_freeze_trace.amo_write_phase) begin
+              //     trace_id.m_mem.wdata = r_pipe_freeze_trace.amo_wdata;
+              // end             
             end
 
             if (trace_id.m_got_ex_reg) begin  // Shift index 0 to 1
@@ -1990,7 +2010,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
             // Mirror the mask capture of the other data_req_ex site above:
             // this path recorded the address but left both masks at 0, so
             // these accesses were invisible to any RVFI mem-mask consumer.
-            if (!r_pipe_freeze_trace.data_we_ex) begin  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+            if (!r_pipe_freeze_trace.data_we_ex) begin  // patch, following OpenHW updated code
               trace_id.m_is_load = 1'b1;
               trace_id.m_mem.rmask = be_to_mask(r_pipe_freeze_trace.lsu_data_be);
             end else begin
@@ -2059,8 +2079,8 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
         // First fill after a trap/interrupt redirect = first handler
         // instruction: consume the pending rvfi_intr mark (insn_trace_t
         // init() copies m_intr down the pipe, so it rides to the retire).
-        trace_if.m_intr = s_pending_intr;  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
-        s_pending_intr  = '0;  // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+        trace_if.m_intr = s_pending_intr;  // patch, following OpenHW updated code
+        s_pending_intr  = '0;  // patch, following OpenHW updated code
 
         trace_if.m_valid = 1'b1;
       end
@@ -2090,7 +2110,7 @@ insn_trace_t trace_if, trace_id, trace_ex, trace_ex_next, trace_wb;
       end else begin
         s_was_flush = 1'b0;
       end
-      // by RICCARDO GIANI, patch copied from file cv32e40p_rvfi.sv
+      // patch, following OpenHW updated code
       // First decode that fills trace_id with a different pc: the entry left
       // no killed row behind (or it was already dropped) - disarm, so a later
       // legitimate re-execution of the same pc (dret back to dpc) never drops.

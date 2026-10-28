@@ -110,6 +110,9 @@ typedef struct {
   logic lsu_en_ex;
   logic lsu_pmp_err_ex;
   logic lsu_pma_err_atomic_ex;
+  // logic amo_write_phase;    // AMO signal
+  // logic [31:0] amo_addr_q;  // AMO signal
+  // logic [31:0] amo_wdata;   // AMO signal
 
   logic [31:0] branch_target_ex;
 
@@ -484,6 +487,10 @@ task monitor_pipeline();
     r_pipe_freeze_trace.lsu_en_ex = lsu_en_ex_i;
     r_pipe_freeze_trace.lsu_pmp_err_ex = lsu_pmp_err_ex_i;
     r_pipe_freeze_trace.lsu_pma_err_atomic_ex = lsu_pma_err_atomic_ex_i;
+    // LSU's AMO signals 
+    // r_pipe_freeze_trace.amo_write_phase = amo_write_phase_i;
+    // r_pipe_freeze_trace.amo_addr_q = amo_addr_q_i;
+    // r_pipe_freeze_trace.amo_wdata = amo_wdata_i;
 
     r_pipe_freeze_trace.branch_target_ex = branch_target_ex_i;
 
