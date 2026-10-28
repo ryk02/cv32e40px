@@ -69,7 +69,12 @@ module cv32e40px_load_store_unit #(
     output logic lsu_ready_ex_o,  // LSU ready for new data in EX stage
     output logic lsu_ready_wb_o,  // LSU ready for new data in WB stage
 
-    output logic busy_o
+    output logic busy_o,
+
+    // RV32A AMO
+    input logic        amo_insn_i,
+    input logic        amo_write_phase_i,
+    input logic [31:0] amo_wdata_i
 );
 
   localparam DEPTH = 2;  // Maximum number of outstanding transactions
@@ -114,6 +119,9 @@ module cv32e40px_load_store_unit #(
   logic load_err_o, store_err_o;
 
   logic [31:0] rdata_q;
+
+  // added register to save the load address for an AMO instruction and re-use it for the store
+  logic [31:0] amo_addr_q;
 
   ///////////////////////////////// BE generation ////////////////////////////////
   always_comb begin
@@ -358,10 +366,10 @@ module cv32e40px_load_store_unit #(
   //////////////////////////////////////////////////////////////////////////////
 
   // For last phase of misaligned transfer the address needs to be word aligned (as LSB of data_be will be set)
-  assign trans_addr = data_misaligned_ex_i ? {data_addr_int[31:2], 2'b00} : data_addr_int;
-  assign trans_we = data_we_ex_i;
+  assign trans_addr = amo_write_phase_i ? amo_addr_q : (data_misaligned_ex_i ? {data_addr_int[31:2], 2'b00} : data_addr_int);
+  assign trans_we = amo_write_phase_i ? 1'b1 : data_we_ex_i;
   assign trans_be = data_be;
-  assign trans_wdata = data_wdata;
+  assign trans_wdata = amo_write_phase_i ? amo_wdata_i : data_wdata;
   assign trans_atop = data_atop_ex_i;
 
   // Transaction request generation
@@ -447,6 +455,13 @@ module cv32e40px_load_store_unit #(
     end
   end
 
+  always_ff @(posedge clk, negedge rst_n) begin
+    if (rst_n == 1'b0) begin
+      amo_addr_q <= 32'b0;
+    end else if (ctrl_update && !amo_write_phase_i) begin
+      amo_addr_q <= data_addr_int;
+    end
+  end
 
   //////////////////////////////////////////////////////////////////////////////
   // OBI interface

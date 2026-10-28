@@ -197,7 +197,9 @@ package cv32e40px_pkg;
     DBG_TAKEN_IF,
     DBG_FLUSH,
     DBG_WAIT_BRANCH,
-    DECODE_HWLOOP
+    DECODE_HWLOOP,
+    AMO_READ_WAIT, // RV32A, stall whuile waiting for rdata from memory
+    AMO_EXE_WRITE  // RV32A, ALU execution and writing in memory
   } ctrl_state_e;
 
   // Debug FSM state encoding

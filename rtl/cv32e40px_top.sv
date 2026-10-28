@@ -33,7 +33,8 @@ module cv32e40px_top
     parameter FPU_ADDMUL_LAT = 0,  // Floating-Point ADDition/MULtiplication computing lane pipeline registers number
     parameter FPU_OTHERS_LAT = 0,  // Floating-Point COMParison/CONVersion computing lanes pipeline registers number
     parameter ZFINX = 0,  // Float-in-General Purpose registers
-    parameter NUM_MHPMCOUNTERS = 1
+    parameter NUM_MHPMCOUNTERS = 1,
+    parameter A_EXTENSION = 1  // RV32A extension (AMO instructions)
 ) (
     // Clock and Reset
     input logic clk_i,
@@ -65,6 +66,7 @@ module cv32e40px_top
     output logic [31:0] data_addr_o,
     output logic [31:0] data_wdata_o,
     input  logic [31:0] data_rdata_i,
+    output logic [ 5:0] data_atop_o,
 
     // CORE-V-XIF
     // Compressed interface
@@ -140,7 +142,8 @@ module cv32e40px_top
       .FPU_ADDMUL_LAT  (FPU_ADDMUL_LAT),
       .FPU_OTHERS_LAT  (FPU_OTHERS_LAT),
       .ZFINX           (ZFINX),
-      .NUM_MHPMCOUNTERS(NUM_MHPMCOUNTERS)
+      .NUM_MHPMCOUNTERS(NUM_MHPMCOUNTERS),
+      .A_EXTENSION     (A_EXTENSION)
   ) core_i (
       .clk_i (clk_i),
       .rst_ni(rst_ni),
@@ -168,6 +171,7 @@ module cv32e40px_top
       .data_addr_o  (data_addr_o),
       .data_wdata_o (data_wdata_o),
       .data_rdata_i (data_rdata_i),
+      .data_atop_o  (data_atop_o),
 
       .apu_busy_o    (apu_busy),
       .apu_req_o     (apu_req),

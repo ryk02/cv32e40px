@@ -39,7 +39,8 @@ module cv32e40px_core
     parameter FPU_ADDMUL_LAT = 0,  // Floating-Point ADDition/MULtiplication lane pipeline registers number
     parameter FPU_OTHERS_LAT = 0,  // Floating-Point COMParison/CONVersion lanes pipeline registers number
     parameter ZFINX = 0,  // Float-in-General Purpose registers
-    parameter NUM_MHPMCOUNTERS = 1
+    parameter NUM_MHPMCOUNTERS = 1,
+    parameter A_EXTENSION = 1  // RV32A extension (AMO instructions)
 ) (
     // Clock and Reset
     input logic clk_i,
@@ -71,6 +72,7 @@ module cv32e40px_core
     output logic [31:0] data_addr_o,
     output logic [31:0] data_wdata_o,
     input  logic [31:0] data_rdata_i,
+    output logic [ 5:0] data_atop_o,  // OBI interface standard for atomic instructions
 
     // CVFPU interface
     output logic                              apu_busy_o,
@@ -142,7 +144,6 @@ module cv32e40px_core
   localparam PULP_SECURE = 0;
   localparam N_PMP_ENTRIES = 16;
   localparam USE_PMP = 0;  // if PULP_SECURE is 1, you can still not use the PMP
-  localparam A_EXTENSION = 0;
   localparam DEBUG_TRIGGER_EN = 1;
 
   // PULP bus interface behavior
@@ -155,7 +156,6 @@ module cv32e40px_core
   // Left in code (with their original _i, _o postfixes) for future design extensions;
   // these used to be former inputs/outputs of RI5CY
 
-  logic [5:0] data_atop_o;  // atomic operation, only active if parameter `A_EXTENSION != 0`
   logic       irq_sec_i;
   logic       sec_lvl_o;
 
@@ -400,6 +400,13 @@ module cv32e40px_core
   logic                           instr_gnt_pmp;
   logic [             31:0]       instr_addr_pmp;
   logic                           instr_err_pmp;
+
+  // signals for RV32A AMO instructions: LSU must receive ALU's output
+  logic amo_write_phase_ex;  // 1'b1 when in AMO's second cycle (ALU ex + store)
+  logic [31:0] amo_wdata_ex; // will exit from the EX-stage, also goes into LSU
+  logic amo_load_done;
+
+  logic amo_insn_dec; // connects ID stage's (decoder's) output to LSU's input
 
   // Mux selector for vectored IRQ PC
   assign m_exc_vec_pc_mux_id = (mtvec_mode == 2'b0) ? 5'h0 : exc_cause;
@@ -754,13 +761,15 @@ module cv32e40px_core
       // LSU
       .data_req_ex_o       (data_req_ex),  // to load store unit
       .data_we_ex_o        (data_we_ex),  // to load store unit
-      .atop_ex_o           (data_atop_ex),
+      .atop_ex_o           (data_atop_ex),  // OBI standard signal for RV32A AMO
       .data_type_ex_o      (data_type_ex),  // to load store unit
       .data_sign_ext_ex_o  (data_sign_ext_ex),  // to load store unit
       .data_reg_offset_ex_o(data_reg_offset_ex),  // to load store unit
       .data_load_event_ex_o(data_load_event_ex),  // to load store unit
 
       .data_misaligned_ex_o(data_misaligned_ex),  // to load store unit
+      .lsu_ready_ex_i(lsu_ready_ex),  // to be proragated to controller in order to store AMO result and unstall pipeline in AMO operations
+      .amo_insn_o(amo_insn_dec), // from decoder to LSU, signals AMO instruction
 
       .prepost_useincr_ex_o(useincr_addr_ex),
       .data_misaligned_i   (data_misaligned),
@@ -822,9 +831,14 @@ module cv32e40px_core
       .mhpmevent_pipe_stall_o  (mhpmevent_pipe_stall),
 
       .perf_imiss_i(perf_imiss),
-      .mcounteren_i(mcounteren)
+      .mcounteren_i(mcounteren),
+
+      // RV32A AMO
+      .amo_load_done_i  (amo_load_done),
+      .amo_write_phase_o(amo_write_phase_ex) // will pilot mux in EX and LSU
   );
 
+  assign amo_load_done = data_rvalid_i;  // LSU flags valid data read from memory
 
   /////////////////////////////////////////////////////
   //   _______  __  ____ _____  _    ____ _____      //
@@ -973,7 +987,13 @@ module cv32e40px_core
 
       .ex_ready_o(ex_ready),
       .ex_valid_o(ex_valid),
-      .wb_ready_i(lsu_ready_wb)
+      .wb_ready_i(lsu_ready_wb),
+
+      // RV32A AMO
+      .amo_write_phase_i (amo_write_phase_ex),  // from controller
+      .amo_rdata_i       (lsu_rdata),           // data read from LSU
+      .amo_wdata_o       (amo_wdata_ex),        // EX-stage exit towards LSU
+      .amo_load_done_i   (amo_load_done)
   );
 
 
@@ -1007,16 +1027,20 @@ module cv32e40px_core
       .data_rdata_i(data_rdata_i),
 
       // signal from ex stage
-      .data_we_ex_i        (data_we_ex),
+      .data_we_ex_i        (data_we_ex | amo_write_phase_ex),  // also forcing writing in AMO's second cycle (ALU ex + store)
       .data_atop_ex_i      (data_atop_ex),
       .data_type_ex_i      (data_type_ex),
-      .data_wdata_ex_i     (alu_operand_c_ex),
+      .data_wdata_ex_i     (amo_write_phase_ex ? amo_wdata_ex : alu_operand_c_ex),  // mux for AMO instructions handling
       .data_reg_offset_ex_i(data_reg_offset_ex),
       .data_load_event_ex_i(data_load_event_ex),
       .data_sign_ext_ex_i  (data_sign_ext_ex),  // sign extension
 
+      .amo_write_phase_i(amo_write_phase_ex),  // for transaction request generation
+      .amo_wdata_i(amo_wdata_ex),  // data for transaction
+      .amo_insn_i(amo_insn_dec),  // form decoder to LSU, signals AMO instruction
+
       .data_rdata_ex_o  (lsu_rdata),
-      .data_req_ex_i    (data_req_ex),
+      .data_req_ex_i    (data_req_ex | amo_write_phase_ex),  // also forcing request in AMO's second cycle (ALU ex + store)
       .operand_a_ex_i   (alu_operand_a_ex),
       .operand_b_ex_i   (alu_operand_b_ex),
       .addr_useincr_ex_i(useincr_addr_ex),

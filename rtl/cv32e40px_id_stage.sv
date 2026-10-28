@@ -226,6 +226,13 @@ module cv32e40px_id_stage
 
     output logic data_misaligned_ex_o,
 
+    input  logic       amo_load_done_i,    // RV32A AMO feedback from LSU: load completed
+    output logic       amo_write_phase_o,  // towards LSU/EX: activates second cycle (write)
+
+    output logic amo_insn_o,  // output to be propagated to LSU
+
+    input logic lsu_ready_ex_i, // propagated directly to controller to store AMO result and unstall pipeline
+
     output logic prepost_useincr_ex_o,
     input  logic data_misaligned_i,
     input  logic data_err_i,
@@ -539,6 +546,10 @@ module cv32e40px_id_stage
   logic id_valid_q;
   logic minstret;
   logic perf_pipeline_stall;
+
+  logic amo_insn_dec; // connects decoder and controller to start AMO FSM, also propagates to LSU
+
+  assign amo_insn_o = amo_insn_dec;
 
   assign instr = instr_rdata_i;
 
@@ -1345,7 +1356,8 @@ module cv32e40px_id_stage
       .data_load_event_o    (data_load_event_id),
 
       // Atomic memory access
-      .atop_o(atop_id),
+      .atop_o               (atop_id),
+      .amo_insn_o           (amo_insn_dec), // from decoder to controller, starts AMO FSM
 
       // hwloop signals
       .hwlp_we_o            (hwlp_we),
@@ -1412,6 +1424,11 @@ module cv32e40px_id_stage
 
       .hwlp_mask_o(hwlp_mask),
 
+      // RV32A AMO instructions
+      .amo_insn_i       (amo_insn_dec),       // from decoder, starts AMO FSM
+      .amo_load_done_i  (amo_load_done_i),    // from core/LSU
+      .amo_write_phase_o(amo_write_phase_o),  // towards core/LSU
+
       // from IF/ID pipeline
       .instr_valid_i(instr_valid_i),
 
@@ -1443,6 +1460,7 @@ module cv32e40px_id_stage
       .data_load_event_i(data_load_event_id),
       .data_err_i       (data_err_i),
       .data_err_ack_o   (data_err_ack_o),
+      .lsu_ready_ex_i   (lsu_ready_ex_i),  // for RV32A AMO instructions (AMO_EXE_WRITE state)
 
       // ALU
       .mult_multicycle_i(mult_multicycle_i),
@@ -1868,7 +1886,7 @@ module cv32e40px_id_stage
         end
 
         branch_in_ex_o <= ctrl_transfer_insn_in_id == BRANCH_COND;
-      end else if (ex_ready_i) begin
+      end else if (ex_ready_i && !amo_insn_dec) begin
         // EX stage is ready but we don't have a new instruction for it,
         // so we set all write enables to 0, but unstall the pipe
 
@@ -1884,7 +1902,7 @@ module cv32e40px_id_stage
 
         apu_en_ex_o          <= 1'b0;
 
-        alu_operator_ex_o    <= ALU_SLTU;
+        // alu_operator_ex_o    <= ALU_SLTU;
 
         mult_en_ex_o         <= 1'b0;
 

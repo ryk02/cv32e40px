@@ -98,6 +98,7 @@ module cv32e40px_controller import cv32e40px_pkg::*;
   input  logic        data_load_event_i,
   input  logic        data_err_i,
   output logic        data_err_ack_o,
+  input  logic        lsu_ready_ex_i,             // for AMO_EXEC_WRITE state
 
   // from ALU
   input  logic        mult_multicycle_i,          // multiplier is taken multiple cycles and uses op c as storage
@@ -204,7 +205,12 @@ module cv32e40px_controller import cv32e40px_pkg::*;
   input  logic        wb_ready_i,                 // WB stage is ready
 
   // Performance Counters
-  output logic        perf_pipeline_stall_o       // stall due to cv.elw extra cycles
+  output logic        perf_pipeline_stall_o,       // stall due to cv.elw extra cycles
+
+  // RV32A AMO instructions handling
+  input  logic        amo_insn_i,           // from decoder: AMO instruction decoded in ID
+  input  logic        amo_load_done_i,      // from LSU: rdata ready
+  output logic        amo_write_phase_o     // towards LSU/EX: start second cycle (ALU ex + store)
 );
 
   // FSM state encoding
@@ -333,6 +339,8 @@ module cv32e40px_controller import cv32e40px_pkg::*;
 
     x_branch_or_async_taken_o = 1'b0;
     x_control_illegal_reset_o = 1'b0;
+    
+    amo_write_phase_o = 1'b0;  // RV32A AMO instructions
 
     unique case (ctrl_fsm_cs)
       // We were just reset, wait for fetch_enable
@@ -625,6 +633,13 @@ module cv32e40px_controller import cv32e40px_pkg::*;
                     data_load_event_i: begin
                       ctrl_fsm_ns   = id_ready_i ? ELW_EXE : DECODE;
                       halt_if_o     = 1'b1;
+                    end
+
+                    amo_insn_i: begin
+                      // RMW (Read-Modify-Write) cycle starts by waiting for load
+                      ctrl_fsm_ns   = id_ready_i ? AMO_READ_WAIT : DECODE;
+                      // halt_if_o     = 1'b1; AMO_READ_WAIT forever
+                      // halt_id_o     = 1'b1; AMO_READ_WAIT forever
                     end
 
                     default: begin
@@ -1271,6 +1286,43 @@ module cv32e40px_controller import cv32e40px_pkg::*;
       end
       // Debug end
 
+      AMO_READ_WAIT:
+      begin
+        is_decoding_o = 1'b0;
+        
+        // stalls injection of new instructions
+        halt_if_o   = 1'b1;
+        halt_id_o   = 1'b1;
+
+        amo_write_phase_o = 1'b0; // still in reading phase
+
+        // waiting for LSU/bus to complete read transaction
+        if (amo_load_done_i) begin
+          ctrl_fsm_ns = AMO_EXE_WRITE;
+        end else begin
+          ctrl_fsm_ns = AMO_READ_WAIT;
+        end
+      end
+
+      AMO_EXE_WRITE:
+      begin
+        is_decoding_o = 1'b0;
+        
+        // stalls upper pipeline stages (IF, ID)
+        halt_if_o   = 1'b1;
+        halt_id_o   = 1'b1;
+        
+        // signals to EX stage and LSU that it is computing and writing
+        amo_write_phase_o = 1'b1;
+
+        // waiting for LSU to accept the asynchronous Store (not ex_valid_i, in AMO the pipeline flow is not followed)
+        if (lsu_ready_ex_i) begin
+          ctrl_fsm_ns = DECODE; // atomic cycle completed, unstalls pipeline
+        end else begin
+          ctrl_fsm_ns = AMO_EXE_WRITE;
+        end
+      end
+
       default: begin
         is_decoding_o = 1'b0;
         instr_req_o = 1'b0;
@@ -1443,6 +1495,12 @@ endgenerate
       operand_b_fw_mux_sel_o  = SEL_REGFILE;
     end else if (mult_multicycle_i) begin
       operand_c_fw_mux_sel_o  = SEL_FW_EX;
+    end
+
+    // RV32A AMO instructions: forwarding rdata back to ALU
+    if (ctrl_fsm_cs == AMO_EXE_WRITE) begin
+      // forces ALU's operand A to take the value from WB (previously read data)
+      operand_a_fw_mux_sel_o  = SEL_FW_WB;
     end
   end
 

@@ -88,6 +88,7 @@ module cv32e40px_tb_wrapper
     output logic [31:0] data_addr_o,
     output logic [31:0] data_wdata_o,
     input  logic [31:0] data_rdata_i,
+    output logic [ 5:0] data_atop_o,
 
     // Interrupt inputs
     input  logic [31:0] irq_i,  // CLINT interrupts + CLINT extension interrupts
@@ -532,6 +533,7 @@ module cv32e40px_tb_wrapper
       .data_addr_o  (data_addr_o),
       .data_wdata_o (data_wdata_o),
       .data_rdata_i (data_rdata_i),
+      .data_atop_o  (data_atop_o),
 
       .irq_i    (irq_i),
       .irq_ack_o(irq_ack_o),

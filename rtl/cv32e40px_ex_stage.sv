@@ -175,7 +175,13 @@ module cv32e40px_ex_stage
 
     output logic ex_ready_o,  // EX stage ready for new data
     output logic ex_valid_o,  // EX stage gets new data
-    input  logic wb_ready_i  // WB stage ready for new data
+    input  logic wb_ready_i,  // WB stage ready for new data
+
+    // RV32A AMO operations with internal RMW
+    input  logic        amo_write_phase_i,  // from controller: 1'b1 during AMO's second cycle (ALU ex + Store)
+    input  logic [31:0] amo_rdata_i,        // from LSU: original data from memory
+    output logic [31:0] amo_wdata_o,        // takes out ALU's result
+    input  logic        amo_load_done_i
 );
 
   logic [                31:0] alu_result;
@@ -206,6 +212,20 @@ module cv32e40px_ex_stage
   logic                        apu_rvalid_q;
   logic [                31:0] apu_result_q;
   logic [APU_NUSFLAGS_CPU-1:0] apu_flags_q;
+
+  // Muxed signal for RV32A AMO
+  logic [31:0] alu_operand_a_muxed;
+
+  // after Load, data read from memory goes into a register
+  logic [31:0] amo_rdata_q;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      amo_rdata_q <= 32'h0;
+    end else if (amo_load_done_i) begin
+      amo_rdata_q <= amo_rdata_i;
+    end
+  end
 
   // ALU write port mux
   always_comb begin
@@ -286,6 +306,12 @@ module cv32e40px_ex_stage
   assign branch_decision_o    = alu_cmp_result;
   assign jump_target_o        = alu_operand_c_i;
 
+  // Muxing ALU's operand A: when executing an AMO instruction, the second phase (ALU ex + store)
+  // requires the ALU to use the forwarded data previously read from memory (1 cycle delay)
+  assign alu_operand_a_muxed = (amo_write_phase_i) ? amo_rdata_q : alu_operand_a_i;
+
+  // if ALU_SLTU while AMO --> AMO_SWAP: bypassing ALU and writing rs2
+  assign amo_wdata_o = (alu_operator_i == ALU_SLTU) ? alu_operand_b_i : alu_result;
 
   ////////////////////////////
   //     _    _    _   _    //
@@ -301,7 +327,7 @@ module cv32e40px_ex_stage
       .rst_n      (rst_n),
       .enable_i   (alu_en_i),
       .operator_i (alu_operator_i),
-      .operand_a_i(alu_operand_a_i),
+      .operand_a_i(alu_operand_a_muxed),  // using muxed signal for handling eventual RV32A AMOs
       .operand_b_i(alu_operand_b_i),
       .operand_c_i(alu_operand_c_i),
 
