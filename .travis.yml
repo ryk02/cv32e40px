@@ -106,7 +106,7 @@ jobs:
       name: run riscv-compliance suite
       script:
         - export RISCV_PREFIX=riscv32-unknown-elf-
-        - export RISCV_DEVICE=rv32imc
+        - export RISCV_DEVICE=rv32imac
         - export RISCV_TARGET=ri5cy
         - export TARGET_SIM=${TRAVIS_BUILD_DIR}/tb/core/testbench_verilator
         - git clone https://github.com/bluewww/riscv-compliance.git -b target-ri5cy
