@@ -410,11 +410,7 @@ module cv32e40px_load_store_unit #(
   assign trans_we = amo_write_phase_i ? 1'b1 : data_we_ex_i;
   assign trans_be = amo_write_phase_i ? amo_data_be       : data_be;
   assign trans_wdata = amo_write_phase_i ? amo_wdata_aligned : data_wdata;
-
-  // hide atop to external bus for internal AMOs, protocol OBI is invariant,
-  // while LSU uses data_atop_ex_i to recognize SWAPs
-  // MUST BE MODIFIED WHEN LR.W AND SC.W WILL BE IMPLEMENTED!!
-  assign trans_atop  = amo_insn_i ? 6'b000000 : data_atop_ex_i;
+  assign trans_atop = data_atop_ex_i;
 
   // Transaction request generation
   generate
