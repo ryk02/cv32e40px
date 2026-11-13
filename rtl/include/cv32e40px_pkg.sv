@@ -198,7 +198,7 @@ package cv32e40px_pkg;
     DBG_FLUSH,
     DBG_WAIT_BRANCH,
     DECODE_HWLOOP,
-    AMO_READ_WAIT, // RV32A, stall whuile waiting for rdata from memory
+    AMO_READ_WAIT, // RV32A, stall while waiting for rdata from memory
     AMO_EXE_WRITE  // RV32A, ALU execution and writing in memory
   } ctrl_state_e;
 
@@ -719,6 +719,7 @@ package cv32e40px_pkg;
   parameter EXC_CAUSE_ILLEGAL_INSN = 5'h02;
   parameter EXC_CAUSE_BREAKPOINT = 5'h03;
   parameter EXC_CAUSE_LOAD_FAULT = 5'h05;
+  parameter EXC_CAUSE_STORE_AMO_ADDR_MISALIGNED = 5'h06;
   parameter EXC_CAUSE_STORE_FAULT = 5'h07;
   parameter EXC_CAUSE_ECALL_UMODE = 5'h08;
   parameter EXC_CAUSE_ECALL_MMODE = 5'h0B;
