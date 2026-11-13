@@ -229,7 +229,8 @@ module cv32e40px_id_stage
     input  logic       amo_load_done_i,    // RV32A AMO feedback from LSU: load completed
     output logic       amo_write_phase_o,  // towards LSU/EX: activates second cycle (write)
 
-    output logic amo_insn_o,  // output to be propagated to LSU
+    output logic amo_insn_o,  // signals AMO instruction to LSU
+    output logic amo_misaligned_end_o,  // signals end of AMO misalignment procedure to LSU (to deassert data_misaligned_o)
 
     input logic lsu_ready_ex_i, // propagated directly to controller to store AMO result and unstall pipeline
 
@@ -547,9 +548,11 @@ module cv32e40px_id_stage
   logic minstret;
   logic perf_pipeline_stall;
 
-  logic amo_insn_dec; // connects decoder and controller to start AMO FSM, also propagates to LSU
+  logic amo_insn_dec;               // connects decoder and controller to start AMO FSM...
+  assign amo_insn_o = amo_insn_dec; //... and will propagate to LSU
 
-  assign amo_insn_o = amo_insn_dec;
+  logic amo_misaligned_end;         // connects controller and LSU to avoid data requests
+  assign amo_misaligned_end_o = amo_misaligned_end;
 
   assign instr = instr_rdata_i;
 
@@ -1357,7 +1360,7 @@ module cv32e40px_id_stage
 
       // Atomic memory access
       .atop_o               (atop_id),
-      .amo_insn_o           (amo_insn_dec), // from decoder to controller, starts AMO FSM
+      .amo_insn_o           (amo_insn_dec), // to controller, starts AMO FSM
 
       // hwloop signals
       .hwlp_we_o            (hwlp_we),
@@ -1428,6 +1431,7 @@ module cv32e40px_id_stage
       .amo_insn_i       (amo_insn_dec),       // from decoder, starts AMO FSM
       .amo_load_done_i  (amo_load_done_i),    // from core/LSU
       .amo_write_phase_o(amo_write_phase_o),  // towards core/LSU
+      .amo_misaligned_end_o(amo_misaligned_end),  // towards core/LSU
 
       // from IF/ID pipeline
       .instr_valid_i(instr_valid_i),
@@ -1776,8 +1780,8 @@ module cv32e40px_id_stage
 
       branch_in_ex_o         <= 1'b0;
 
-    end else if (data_misaligned_i) begin
-      // misaligned data access case
+    end else if (data_misaligned_i && !amo_insn_dec) begin
+      // misaligned data access case, normal procedure must be ignored for Zaamo instructions (address-misaligned exception, instead) 
       if (ex_ready_i) begin  // misaligned access case, only unstall alu operands
 
         // if we are using post increments, then we have to use the
@@ -1886,7 +1890,7 @@ module cv32e40px_id_stage
         end
 
         branch_in_ex_o <= ctrl_transfer_insn_in_id == BRANCH_COND;
-      end else if (ex_ready_i && !amo_insn_dec) begin
+      end else if (ex_ready_i || amo_misaligned_end) begin
         // EX stage is ready but we don't have a new instruction for it,
         // so we set all write enables to 0, but unstall the pipe
 
