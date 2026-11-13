@@ -407,6 +407,7 @@ module cv32e40px_core
   logic amo_load_done;
 
   logic amo_insn_dec; // connects ID stage's (decoder's) output to LSU's input
+  logic amo_misaligned_end; // connects ID stage's (controller's) output to LSU's input
 
   // Mux selector for vectored IRQ PC
   assign m_exc_vec_pc_mux_id = (mtvec_mode == 2'b0) ? 5'h0 : exc_cause;
@@ -770,6 +771,7 @@ module cv32e40px_core
       .data_misaligned_ex_o(data_misaligned_ex),  // to load store unit
       .lsu_ready_ex_i(lsu_ready_ex),  // to be proragated to controller in order to store AMO result and unstall pipeline in AMO operations
       .amo_insn_o(amo_insn_dec), // from decoder to LSU, signals AMO instruction
+      .amo_misaligned_end_o(amo_misaligned_end), // from controller to LSU, signals end of AMO misalignment procedure
 
       .prepost_useincr_ex_o(useincr_addr_ex),
       .data_misaligned_i   (data_misaligned),
@@ -990,6 +992,7 @@ module cv32e40px_core
       .wb_ready_i(lsu_ready_wb),
 
       // RV32A AMO
+      .data_type_ex_i    (data_type_ex),        // byte (Zabha), halfword (Zabha) or word (Zaamo)
       .amo_write_phase_i (amo_write_phase_ex),  // from controller
       .amo_rdata_i       (lsu_rdata),           // data read from LSU
       .amo_wdata_o       (amo_wdata_ex),        // EX-stage exit towards LSU
@@ -1037,7 +1040,8 @@ module cv32e40px_core
 
       .amo_write_phase_i(amo_write_phase_ex),  // for transaction request generation
       .amo_wdata_i(amo_wdata_ex),  // data for transaction
-      .amo_insn_i(amo_insn_dec),  // form decoder to LSU, signals AMO instruction
+      .amo_insn_i(amo_insn_dec),  // from decoder, signals AMO instruction
+      .amo_misaligned_end_i(amo_misaligned_end),  // from controller, signals end of AMO misalignment procedure
 
       .data_rdata_ex_o  (lsu_rdata),
       .data_req_ex_i    (data_req_ex | amo_write_phase_ex),  // also forcing request in AMO's second cycle (ALU ex + store)

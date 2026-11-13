@@ -210,7 +210,8 @@ module cv32e40px_controller import cv32e40px_pkg::*;
   // RV32A AMO instructions handling
   input  logic        amo_insn_i,           // from decoder: AMO instruction decoded in ID
   input  logic        amo_load_done_i,      // from LSU: rdata ready
-  output logic        amo_write_phase_o     // towards LSU/EX: start second cycle (ALU ex + store)
+  output logic        amo_write_phase_o,    // towards LSU/EX: start second cycle (ALU ex + store)
+  output logic        amo_misaligned_end_o  // towards LSU: deasserts data_misaligned_o when exception is generated
 );
 
   // FSM state encoding
@@ -253,6 +254,8 @@ module cv32e40px_controller import cv32e40px_pkg::*;
   // qualify wfi vs nosleep locally
   logic wfi_active;
 
+  // misalignement in AMO generates exception
+  logic amo_misaligned_n, amo_misaligned_q;
 
   ////////////////////////////////////////////////////////////////////////////////////////////
   //   ____ ___  ____  _____    ____ ___  _   _ _____ ____   ___  _     _     _____ ____    //
@@ -341,6 +344,9 @@ module cv32e40px_controller import cv32e40px_pkg::*;
     x_control_illegal_reset_o = 1'b0;
     
     amo_write_phase_o = 1'b0;  // RV32A AMO instructions
+
+    amo_misaligned_n = amo_misaligned_q;  // misalignement during AMO instr
+    amo_misaligned_end_o = 1'b0;          // AMO misalignment procedure finished
 
     unique case (ctrl_fsm_cs)
       // We were just reset, wait for fetch_enable
@@ -443,6 +449,8 @@ module cv32e40px_controller import cv32e40px_pkg::*;
 
       DECODE:
       begin
+
+          amo_misaligned_end_o = 1'b0; // reset this flag unconditionally when back to DECODE from FLUSH_WB
 
           if (branch_taken_ex_i)
           begin //taken branch
@@ -638,8 +646,8 @@ module cv32e40px_controller import cv32e40px_pkg::*;
                     amo_insn_i: begin
                       // RMW (Read-Modify-Write) cycle starts by waiting for load
                       ctrl_fsm_ns   = id_ready_i ? AMO_READ_WAIT : DECODE;
-                      // halt_if_o     = 1'b1; AMO_READ_WAIT forever
-                      // halt_id_o     = 1'b1; AMO_READ_WAIT forever
+                      halt_if_o     = 1'b1;
+                      halt_id_o     = 1'b0;
                     end
 
                     default: begin
@@ -1053,7 +1061,18 @@ module cv32e40px_controller import cv32e40px_pkg::*;
 
         ctrl_fsm_ns = DECODE;
 
-        if(data_err_q) begin
+        if (amo_misaligned_q) begin
+          // exception for AMO address misalignment
+          pc_mux_o              = PC_EXCEPTION;
+          pc_set_o              = 1'b1;
+          trap_addr_mux_o       = TRAP_MACHINE;
+          exc_pc_mux_o          = EXC_PC_EXCEPTION;
+          exc_cause_o           = EXC_CAUSE_STORE_AMO_ADDR_MISALIGNED;
+          amo_misaligned_n      = 1'b0; // flag reset
+          amo_misaligned_end_o  = 1'b1; // to ID-stage and LSU 
+
+        end
+        else if(data_err_q) begin
             //PMP data_error
             pc_mux_o              = PC_EXCEPTION;
             pc_set_o              = 1'b1;
@@ -1296,8 +1315,14 @@ module cv32e40px_controller import cv32e40px_pkg::*;
 
         amo_write_phase_o = 1'b0; // still in reading phase
 
-        // waiting for LSU/bus to complete read transaction
-        if (amo_load_done_i) begin
+        // waiting for LSU/bus to complete read transaction, unless data misalignment
+        if (data_misaligned_i) begin
+          csr_save_ex_o     = 1'b1;
+          csr_save_cause_o  = 1'b1;
+          csr_cause_o       = {1'b0, EXC_CAUSE_STORE_AMO_ADDR_MISALIGNED};
+          amo_misaligned_n  = 1'b1;  // tells FLUSH_WB to assert the exception
+          ctrl_fsm_ns       = FLUSH_WB;
+        end else if (amo_load_done_i) begin
           ctrl_fsm_ns = AMO_EXE_WRITE;
         end else begin
           ctrl_fsm_ns = AMO_READ_WAIT;
@@ -1451,9 +1476,8 @@ endgenerate
     end
   end
 
-
   // stall because of misaligned data access
-  assign misaligned_stall_o = data_misaligned_i;
+  assign misaligned_stall_o = data_misaligned_i && !amo_insn_i;
 
   // APU dependency stalls (data hazards)
   assign apu_stall_o = apu_read_dep_i | (apu_write_dep_i & ~apu_en_i);
@@ -1489,7 +1513,7 @@ endgenerate
     end
 
     // for misaligned memory accesses
-    if (data_misaligned_i)
+    if (data_misaligned_i && !amo_insn_i)
     begin
       operand_a_fw_mux_sel_o  = SEL_FW_EX;
       operand_b_fw_mux_sel_o  = SEL_REGFILE;
@@ -1518,6 +1542,8 @@ endgenerate
 
       debug_req_entry_q  <= 1'b0;
       debug_force_wakeup_q <= 1'b0;
+
+      amo_misaligned_q   <= 1'b0;
     end
     else
     begin
@@ -1534,6 +1560,8 @@ endgenerate
 
       debug_req_entry_q  <= debug_req_entry_n;
       debug_force_wakeup_q <= debug_force_wakeup_n;
+
+      amo_misaligned_q   <= amo_misaligned_n;
     end
   end
 

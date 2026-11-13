@@ -74,7 +74,8 @@ module cv32e40px_load_store_unit #(
     // RV32A AMO
     input logic        amo_insn_i,
     input logic        amo_write_phase_i,
-    input logic [31:0] amo_wdata_i
+    input logic [31:0] amo_wdata_i,
+    input logic        amo_misaligned_end_i
 );
 
   localparam DEPTH = 2;  // Maximum number of outstanding transactions
@@ -122,6 +123,43 @@ module cv32e40px_load_store_unit #(
 
   // added register to save the load address for an AMO instruction and re-use it for the store
   logic [31:0] amo_addr_q;
+
+  // Zabha extension: atomic operations for half-words and bytes
+  logic [ 3:0] amo_data_be;
+  logic [31:0] amo_wdata_aligned;
+  logic [31:0] amo_wdata_muxed;
+  logic [ 4:0] byte_shift;
+  logic [ 4:0] hw_shift;
+
+  assign byte_shift = {amo_addr_q[1:0], 3'b000}; // = amo_addr_q[1:0] * 8
+  assign hw_shift   = {amo_addr_q[1], 4'b0000};  // = amo_addr_q[1] * 16
+
+  always_comb begin
+    // byte enable gen (mask aligned to address)
+    case (data_type_ex_i)
+      2'b10, 2'b11: amo_data_be = 4'b0001 << amo_addr_q[1:0];       // Byte (.B)
+      2'b01:        amo_data_be = 4'b0011 << {amo_addr_q[1], 1'b0}; // Halfword (.H)
+      2'b00:        amo_data_be = 4'b1111;                          // Word (.W)
+      default:      amo_data_be = 4'b1111;
+    endcase
+
+    // explicit bypass for AMO_SWAP (Opcode RISC-V: 00001 --> atop: 6'b100001)
+    // directly taking the value of rs2 (operand_b_ex_i)
+    if (data_atop_ex_i == 6'b100001) begin 
+      amo_wdata_muxed = operand_b_ex_i;
+    end else begin
+      amo_wdata_muxed = amo_wdata_i;
+    end
+
+    // byte steering (alignment)
+    case (data_type_ex_i)
+      2'b10, 2'b11: amo_wdata_aligned = {24'b0, amo_wdata_muxed[7:0]}   << byte_shift;
+      2'b01:        amo_wdata_aligned = {16'b0, amo_wdata_muxed[15:0]}  << hw_shift;
+      2'b00:        amo_wdata_aligned = amo_wdata_muxed;
+      default:      amo_wdata_aligned = amo_wdata_muxed;
+    endcase
+  end
+
 
   ///////////////////////////////// BE generation ////////////////////////////////
   always_comb begin
@@ -336,7 +374,9 @@ module cv32e40px_load_store_unit #(
   always_comb begin
     data_misaligned_o = 1'b0;
 
-    if ((data_req_ex_i == 1'b1) && (data_misaligned_ex_i == 1'b0)) begin
+    if (amo_misaligned_end_i == 1'b1) begin
+      data_misaligned_o = 1'b0;
+    end else if ((data_req_ex_i == 1'b1) && (data_misaligned_ex_i == 1'b0)) begin
       case (data_type_ex_i)
         2'b00: // word
         begin
@@ -368,9 +408,13 @@ module cv32e40px_load_store_unit #(
   // For last phase of misaligned transfer the address needs to be word aligned (as LSB of data_be will be set)
   assign trans_addr = amo_write_phase_i ? amo_addr_q : (data_misaligned_ex_i ? {data_addr_int[31:2], 2'b00} : data_addr_int);
   assign trans_we = amo_write_phase_i ? 1'b1 : data_we_ex_i;
-  assign trans_be = data_be;
-  assign trans_wdata = amo_write_phase_i ? amo_wdata_i : data_wdata;
-  assign trans_atop = data_atop_ex_i;
+  assign trans_be = amo_write_phase_i ? amo_data_be       : data_be;
+  assign trans_wdata = amo_write_phase_i ? amo_wdata_aligned : data_wdata;
+
+  // hide atop to external bus for internal AMOs, protocol OBI is invariant,
+  // while LSU uses data_atop_ex_i to recognize SWAPs
+  // MUST BE MODIFIED WHEN LR.W AND SC.W WILL BE IMPLEMENTED!!
+  assign trans_atop  = amo_insn_i ? 6'b000000 : data_atop_ex_i;
 
   // Transaction request generation
   generate
@@ -378,12 +422,17 @@ module cv32e40px_load_store_unit #(
       // OBI compatible (avoids combinatorial path from data_rvalid_i to data_req_o).
       // Multiple trans_* transactions can be issued (and accepted) before a response
       // (resp_*) is received.
-      assign trans_valid = data_req_ex_i && (cnt_q < DEPTH);
+      // We must invalid the transaction in case of AMO misalignment, otherwise there will be an unwanted data request.
+      // The AMO misalignment procedure generates an address-misaligned exception and takes place
+      // during two separe states/clock-cycles after the DECODE phase is completed:
+      // - in the first clock cycle the LSU discovers the misalignment (AMO_READ_WAIT) --> !(amo_insn_i && data_misaligned_o)
+      // - in the second clock cycle the controller generates the address-misaligned exception (FLUSH_WB) --> !amo_misaligned_end_i
+      assign trans_valid = data_req_ex_i && (cnt_q < DEPTH) && !(amo_insn_i && data_misaligned_o) && !amo_misaligned_end_i;
     end else begin : gen_pulp_obi
       // Legacy PULP OBI behavior, i.e. only issue subsequent transaction if preceding transfer
       // is about to finish (re-introducing timing critical path from data_rvalid_i to data_req_o)
       assign trans_valid = (cnt_q == 2'b00) ? data_req_ex_i && (cnt_q < DEPTH) :
-                                              data_req_ex_i && (cnt_q < DEPTH) && resp_valid;
+                                              data_req_ex_i && (cnt_q < DEPTH) && resp_valid; // && !(amo_insn_i && data_misaligned_o) && !amo_misaligned_end_i
     end
   endgenerate
 
