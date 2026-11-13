@@ -410,15 +410,24 @@ module cv32e40px_decoder
         endcase
       end
 
-      /////////////
-      // Atomics //
-      /////////////
+      ///////////////
+      //           //
+      //  ATOMICS  //
+      //           //
+      ///////////////
 
       OPCODE_AMO: begin
         if (A_EXTENSION) begin : decode_amo
-          if (instr_rdata_i[14:12] == 3'b010) begin // RV32A Extension (word)
+          // 000 = Byte (Zabha), 001 = Halfword (Zabha), 010 = Word (Zaamo)
+          if (instr_rdata_i[14:12] == 3'b010 || instr_rdata_i[14:12] == 3'b001 || instr_rdata_i[14:12] == 3'b000) begin
             data_req          = 1'b1;
-            data_type_o       = 2'b00;
+            // dynamic dimension decode
+            unique case (instr_rdata_i[14:12])
+              3'b000: data_type_o = 2'b10; // Byte (Zabha)
+              3'b001: data_type_o = 2'b01; // Halfword (Zabha)
+              3'b010: data_type_o = 2'b00; // Word (Zaamo)
+              default: data_type_o = 2'b00;
+            endcase
             rega_used_o       = 1'b1;
             regb_used_o       = 1'b1;
             regfile_mem_we    = 1'b1;
@@ -436,6 +445,8 @@ module cv32e40px_decoder
                 regb_used_o = 1'b0;                     // rs2 not used in load-reserved
                 alu_op_a_mux_sel_o = OP_A_REGA_OR_FWD;  // rs1 for address
 
+                // LR supported for words only
+                if (instr_rdata_i[14:12] != 3'b010) illegal_insn_o = 1'b1;
                 // rs2 must be '0
                 if (instr_rdata_i[24:20] != 5'b00000) illegal_insn_o = 1'b1;
               end
@@ -444,10 +455,13 @@ module cv32e40px_decoder
                 data_we_o = 1'b1;                       // write in memory
                 alu_op_a_mux_sel_o = OP_A_REGA_OR_FWD;  // rs1 for address
                 alu_op_c_mux_sel_o = OP_C_REGB_OR_FWD;  // rs2 passed as ALU's C operand
+
+                // SC supported for words only
+                if (instr_rdata_i[14:12] != 3'b010) illegal_insn_o = 1'b1;
               end
 
               AMO_SWAP, AMO_ADD, AMO_XOR, AMO_AND, AMO_OR, AMO_MIN, AMO_MAX, AMO_MINU, AMO_MAXU: begin // use core's ALU
-                atop_o = 6'b000000;  // AMOs handled by core, normal loads/stores on OBI
+                // Zaamo and Zabha instructions should use lr.w & sc.w, their actual implementation hasn't been tested yet
                 
                 amo_insn_o = 1'b1;  // starts controller's FSM RMW in ID stage
                 data_we_o  = 1'b0;  // FSM RMW always starts with a read
@@ -474,7 +488,7 @@ module cv32e40px_decoder
             endcase
           end
           else begin
-            illegal_insn_o = 1'b1; // not word
+            illegal_insn_o = 1'b1; // undefined funct3 string (neither word, halfword or byte)
           end
         end else begin : no_decode_amo
           illegal_insn_o = 1'b1;
@@ -3033,9 +3047,6 @@ module cv32e40px_decoder
   assign hwlp_we_o                   = (deassert_we_i) ? 3'b0          : hwlp_we;
   assign csr_op_o                    = (deassert_we_i) ? CSR_OP_READ   : csr_op;
   assign ctrl_transfer_insn_in_id_o  = (deassert_we_i) ? BRANCH_NONE   : ctrl_transfer_insn;
-
-  // only for eventual intermediate register presence
-  // assign amo_insn_out_pin = (deassert_we_i) ? 1'b0 : amo_insn_o;
 
   assign ctrl_transfer_insn_in_dec_o  = ctrl_transfer_insn;
   assign regfile_alu_we_dec_o         = regfile_alu_we;

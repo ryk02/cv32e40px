@@ -178,6 +178,7 @@ module cv32e40px_ex_stage
     input  logic wb_ready_i,  // WB stage ready for new data
 
     // RV32A AMO operations with internal RMW
+    input  logic [ 1:0] data_type_ex_i,     // byte (Zabha), halfword (Zabha) or word (Zaamo)
     input  logic        amo_write_phase_i,  // from controller: 1'b1 during AMO's second cycle (ALU ex + Store)
     input  logic [31:0] amo_rdata_i,        // from LSU: original data from memory
     output logic [31:0] amo_wdata_o,        // takes out ALU's result
@@ -213,8 +214,11 @@ module cv32e40px_ex_stage
   logic [                31:0] apu_result_q;
   logic [APU_NUSFLAGS_CPU-1:0] apu_flags_q;
 
-  // Muxed signal for RV32A AMO
+  // internal signals for Zaamo and Zabha instructions
   logic [31:0] alu_operand_a_muxed;
+  logic [31:0] alu_operand_b_muxed;
+  logic [31:0] amo_op_a_ext;
+  logic [31:0] amo_op_b_ext;
 
   // after Load, data read from memory goes into a register
   logic [31:0] amo_rdata_q;
@@ -306,12 +310,41 @@ module cv32e40px_ex_stage
   assign branch_decision_o    = alu_cmp_result;
   assign jump_target_o        = alu_operand_c_i;
 
-  // Muxing ALU's operand A: when executing an AMO instruction, the second phase (ALU ex + store)
-  // requires the ALU to use the forwarded data previously read from memory (1 cycle delay)
-  assign alu_operand_a_muxed = (amo_write_phase_i) ? amo_rdata_q : alu_operand_a_i;
+  always_comb begin
+    // default is word (Zaamo)
+    amo_op_a_ext = amo_rdata_q;
+    amo_op_b_ext = alu_operand_b_i;
 
-  // if ALU_SLTU while AMO --> AMO_SWAP: bypassing ALU and writing rs2
-  assign amo_wdata_o = (alu_operator_i == ALU_SLTU) ? alu_operand_b_i : alu_result;
+    if (amo_write_phase_i) begin
+      if (data_type_ex_i == 2'b10) begin // byte (Zabha)
+        if (alu_operator_i == ALU_MAXU || alu_operator_i == ALU_MINU) begin
+          // zero-extension of both operands for unsigned comparisons
+          amo_op_a_ext = {24'b0, amo_rdata_q[7:0]};
+          amo_op_b_ext = {24'b0, alu_operand_b_i[7:0]};
+        end else if (alu_operator_i == ALU_MAX || alu_operator_i == ALU_MIN) begin
+          // sign-extension of operand B (rs2) for signed comparisons (amo_rdata_q already extended by LSU)
+          amo_op_b_ext = {{24{alu_operand_b_i[7]}}, alu_operand_b_i[7:0]};
+        end
+      end 
+      else if (data_type_ex_i == 2'b01) begin // halfword (Zabha)
+        if (alu_operator_i == ALU_MAXU || alu_operator_i == ALU_MINU) begin
+          // zero-extension of both operands for unsigned comparisons
+          amo_op_a_ext = {16'b0, amo_rdata_q[15:0]};
+          amo_op_b_ext = {16'b0, alu_operand_b_i[15:0]};
+        end else if (alu_operator_i == ALU_MAX || alu_operator_i == ALU_MIN) begin
+          // sign-extension of operand B (rs2) for signed comparisons (amo_rdata_q already extended by LSU)
+          amo_op_b_ext = {{16{alu_operand_b_i[15]}}, alu_operand_b_i[15:0]};
+        end
+      end
+    end
+  end
+
+  // Muxing operands A e B
+  assign alu_operand_a_muxed = (amo_write_phase_i) ? amo_op_a_ext : alu_operand_a_i;
+  assign alu_operand_b_muxed = (amo_write_phase_i) ? amo_op_b_ext : alu_operand_b_i;
+
+  // if ALU_SLTU while AMO --> AMO_SWAP: bypasses ALU and directly uses the value of rs2 (already extended if needed)
+  assign amo_wdata_o = (alu_operator_i == ALU_SLTU) ? amo_op_b_ext : alu_result;
 
   ////////////////////////////
   //     _    _    _   _    //
@@ -327,8 +360,8 @@ module cv32e40px_ex_stage
       .rst_n      (rst_n),
       .enable_i   (alu_en_i),
       .operator_i (alu_operator_i),
-      .operand_a_i(alu_operand_a_muxed),  // using muxed signal for handling eventual RV32A AMOs
-      .operand_b_i(alu_operand_b_i),
+      .operand_a_i(alu_operand_a_muxed),  // using muxed signal for eventual Zaamo/Zabha instructions
+      .operand_b_i(alu_operand_b_muxed),  // using muxed signal for eventual Zaamo/Zabha instructions
       .operand_c_i(alu_operand_c_i),
 
       .vector_mode_i(alu_vec_mode_i),
