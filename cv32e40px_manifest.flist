@@ -24,14 +24,22 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 +incdir+${DESIGN_RTL_DIR}/include
++incdir+${DESIGN_RTL_DIR}/include/obi
 +incdir+${DESIGN_RTL_DIR}/../bhv
 +incdir+${DESIGN_RTL_DIR}/../bhv/include
 +incdir+${DESIGN_RTL_DIR}/../sva
+
+${DESIGN_RTL_DIR}/vendor/pulp_platform_common_cells/src/cf_math_pkg.sv
+${DESIGN_RTL_DIR}/vendor/pulp_platform_common_cells/src/lzc.sv
+${DESIGN_RTL_DIR}/vendor/pulp_platform_common_cells/src/stream_fifo.sv
+${DESIGN_RTL_DIR}/vendor/pulp_platform_common_cells/src/fifo_v3.sv
+${DESIGN_RTL_DIR}/vendor/pulp_platform_common_cells/src/credit_counter.sv
 
 ${DESIGN_RTL_DIR}/include/cv32e40px_apu_core_pkg.sv
 ${DESIGN_RTL_DIR}/include/cv32e40px_core_v_xif_pkg.sv
 ${DESIGN_RTL_DIR}/include/cv32e40px_fpu_pkg.sv
 ${DESIGN_RTL_DIR}/include/cv32e40px_pkg.sv
+${DESIGN_RTL_DIR}/include/obi_pkg.sv
 ${DESIGN_RTL_DIR}/cv32e40px_if_stage.sv
 ${DESIGN_RTL_DIR}/cv32e40px_cs_registers.sv
 ${DESIGN_RTL_DIR}/cv32e40px_register_file_ff.sv
@@ -56,6 +64,7 @@ ${DESIGN_RTL_DIR}/cv32e40px_obi_interface.sv
 ${DESIGN_RTL_DIR}/cv32e40px_prefetch_controller.sv
 ${DESIGN_RTL_DIR}/cv32e40px_sleep_unit.sv
 ${DESIGN_RTL_DIR}/cv32e40px_core.sv
+${DESIGN_RTL_DIR}/obi_atop_resolver.sv
 
 ${DESIGN_RTL_DIR}/cv32e40px_top.sv
 
