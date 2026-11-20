@@ -23,6 +23,14 @@
 //                                                                         //
 /////////////////////////////////////////////////////////////////////////////
 
+// --- TIP FOR QUICK USAGE ---
+// when you launch the commands < make comp ... > and < make test ... >,
+// the makefiles look for the file name "cv32e40px_top.sv".
+// Instead of dealing with them, it's quicker and easier to just rename this file:
+// - "cv32e40px_top.sv" if you want to run any test that does not concern the Zalrsc extension
+//   (which means you don't need to instanciate the obi_atop_resolver);
+// - "cv32e40px_top_default.sv" if you are not interested in this top wrapper.
+
 module cv32e40px_top
   import cv32e40px_core_v_xif_pkg::*;
 #(
