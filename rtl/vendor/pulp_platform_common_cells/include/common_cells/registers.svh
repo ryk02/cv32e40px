@@ -75,6 +75,25 @@
     end                                                    \
   end
 
+// Flip-Flop with asynchronous active-low reset and synchronous clear
+// __q: Q output of FF
+// __d: D input of FF
+// __clear: assign reset value into FF
+// __reset_value: value assigned upon reset
+// __clk: clock input
+// __arst_n: asynchronous reset
+`define FFARNC(__q, __d, __clear, __reset_value, __clk, __arst_n) \
+    `ifndef VERILATOR                       \
+  /``* synopsys sync_set_reset `"__clear`" *``/                   \
+    `endif                        \
+  always_ff @(posedge (__clk) or negedge (__arst_n)) begin        \
+    if (!__arst_n) begin                                          \
+      __q <= (__reset_value);                                     \
+    end else begin                                                \
+      __q <= (__clear) ? (__reset_value) : (__d);                 \
+    end                                                           \
+  end  
+
 // Flip-Flop with synchronous active-high reset
 // __q: Q output of FF
 // __d: D input of FF
